@@ -42,6 +42,7 @@ Description(x) <- "False banana (enset) SSR genotyping dataset (Fetta Negash)"
 # First we need to give the populations as integers from 1 to 5, in agreement with the different names for the 5 populations (factor-like thing)
 Samples(x) -> samples
 index_underscore = regexpr('_', samples, fixed=T) # will yield a vector of indices
+
 popnames = factor(substring(samples,index_underscore+1))
 PopNames(x) <- levels(popnames)    # 5 names
 PopInfo(x) <- as.integer(popnames) # integers from 1 to 5
@@ -52,7 +53,7 @@ Loci(x)
 #  "P1"  "P11" "P12" "P13" "P15" "P2"  "P4"  "P6"  "P7"  "P8"  "P9"  "P10"
 # Usatnts(x) <- c(3,2,2,3,2,2,2,2,3,2,2,2)
 #"P1"  "P10" "P11" "P12" "P13" "P15" "P2"  "P6"  "P7"  "P8"  "P9"  "P4"
-Usatnts(x) <- c(3,2,2,3,2,2,2,3,2,2,2,2)
+# Usatnts(x) <- c(3,2,2,3,2,2,2,3,2,2,2,2)
 #  "P1"  "P10" "P11" "P12" "P13" "P15" "P2"  "P4"  "P6"  "P7"  "P8"  "P9" 
 # Usatnts(x) <- c(3,2,2,2,3,2,2,2,2,3,2,2)
 
