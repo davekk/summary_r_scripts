@@ -1,0 +1,1003 @@
+# ============================================================
+# Tutorial on drawing an NMDS plot using ggplot2 NMDS.R
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+meta_table<-read.csv("ENV_pitlatrine.csv",row.names=1,check.names=FALSE)
+#Just a check to ensure that the samples in meta_table are in the same order as in abund_table
+meta_table<-meta_table[rownames(abund_table),]
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+head(grouping_info) # view the head of the variable
+
+#Load vegan library
+# install.packages("vegan")
+library(vegan)
+#Get MDS stats
+sol<-metaMDS(abund_table,distance = "bray", k = 2, trymax = 50)
+
+#Make a new data frame, and put country, latrine, and depth information there, to be useful for coloring, and shape of points
+NMDS=data.frame(x=sol$point[,1],y=sol$point[,2],Country=as.factor(grouping_info[,1]),Latrine=as.factor(grouping_info[,2]),Depth=as.factor(grouping_info[,3]))
+
+#Reference: http://stackoverflow.com/questions/13794419/plotting-ordiellipse-function-from-vegan-package-onto-nmds-plot-created-in-ggplo
+#Data frame df_ell contains values to show ellipses. It is calculated with function veganCovEllipse which is hidden in vegan package. This function is applied to each level of NMDS (group) and it uses also function cov.wt to calculate covariance matrix.
+veganCovEllipse<-function (cov, center = c(0, 0), scale = 1, npoints = 100) 
+{
+  theta <- (0:npoints) * 2 * pi/npoints
+  Circle <- cbind(cos(theta), sin(theta))
+  t(center + scale * t(Circle %*% chol(cov)))
+}
+
+#Generate ellipse points
+df_ell <- data.frame()
+for(g in levels(NMDS$Country)){
+  if(g!="" && (g %in% names(ord))){
+    
+    df_ell <- rbind(df_ell, cbind(as.data.frame(with(NMDS[NMDS$Country==g,],
+                                                     veganCovEllipse(ord[[g]]$cov,ord[[g]]$center,ord[[g]]$scale)))
+                                  ,Country=g))
+  }
+}
+
+head(df_ell)
+
+#Generate mean values from NMDS plot grouped on Countries
+NMDS.mean=aggregate(NMDS[,1:2],list(group=NMDS$Country),mean)
+
+#Now do the actual plotting
+library(ggplot2)
+
+shape_values <- seq(1,11)
+
+p<-ggplot(data=NMDS,aes(x,y,colour=Country))
+p<-p+ annotate("text",x=NMDS.mean$x,y=NMDS.mean$y,label=NMDS.mean$group,size=4)
+p<-p+ geom_path(data=df_ell, aes(x=NMDS1, y=NMDS2), size=1, linetype=2)
+p<-p+geom_point(aes(shape=Depth))+scale_shape_manual(values=shape_values)+theme_bw() 
+pdf("NMDS.pdf")
+print(p)
+dev.off()
+###################
+#
+######
+# ============================================================
+# Tutorial on drawing a CCA plot with significant environmental variables using ggplot2
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+
+library(vegan)
+library(grid)
+
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+
+meta_table<-read.csv("ENV_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Just a check to ensure that the samples in meta_table are in the same order as in abund_table
+meta_table<-meta_table[rownames(abund_table),]
+
+#Filter out any samples taxas that have zero entries 
+abund_table<-subset(abund_table,rowSums(abund_table)!=0)
+
+#Convert to relative frequencies
+abund_table<-abund_table/rowSums(abund_table)
+
+#Use adonis to find significant environmental variables
+abund_table.adonis <- adonis(abund_table ~ ., data=meta_table)
+
+abund_table.adonis
+
+#Extract the best variables
+bestEnvVariables<-rownames(abund_table.adonis$aov.tab)[abund_table.adonis$aov.tab$"Pr(>F)"<=0.01]
+
+#Last two are NA entries, so we have to remove them
+bestEnvVariables<-bestEnvVariables[!is.na(bestEnvVariables)]
+
+#We are now going to use only those environmental variables in cca that were found significant
+eval(parse(text=paste("sol <- cca(abund_table ~ ",do.call(paste,c(as.list(bestEnvVariables),sep=" + ")),",data=meta_table)",sep="")))
+
+#You can use the following to use all the environmental variables
+#sol<-cca(abund_table ~ ., data=meta_table)
+
+scrs<-scores(sol,display=c("sp","wa","lc","bp","cn"))
+
+#Check the attributes
+attributes(scrs)
+
+#Extract site data first
+df_sites<-data.frame(scrs$sites,t(as.data.frame(strsplit(rownames(scrs$sites),"_"))))
+colnames(df_sites)<-c("x","y","Country","Latrine","Depth")
+
+#Draw sites
+p<-ggplot()
+p<-p+geom_point(data=df_sites,aes(x,y,colour=Country))
+
+#Draw biplots
+multiplier <- vegan:::ordiArrowMul(scrs$biplot)
+
+# Reference: http://www.inside-r.org/packages/cran/vegan/docs/envfit
+# The printed output of continuous variables (vectors) gives the direction cosines 
+# which are the coordinates of the heads of unit length vectors. In plot these are 
+# scaled by their correlation (square root of the column r2) so that "weak" predictors 
+# have shorter arrows than "strong" predictors. You can see the scaled relative lengths 
+# using command scores. The plotted (and scaled) arrows are further adjusted to the 
+# current graph using a constant multiplier: this will keep the relative r2-scaled 
+# lengths of the arrows but tries to fill the current plot. You can see the multiplier 
+# using vegan:::ordiArrowMul(result_of_envfit), and set it with the argument arrow.mul. 
+
+df_arrows<- scrs$biplot*multiplier
+colnames(df_arrows)<-c("x","y")
+df_arrows=as.data.frame(df_arrows)
+
+p<-p+geom_segment(data=df_arrows, aes(x = 0, y = 0, xend = x, yend = y),
+                  arrow = arrow(length = unit(0.2, "cm")),color="#808080",alpha=0.5)
+
+p<-p+geom_text(data=as.data.frame(df_arrows*1.1),aes(x, y, label = rownames(df_arrows)),color="#808080",alpha=0.5)
+
+# Draw species
+df_species<- as.data.frame(scrs$species)
+colnames(df_species)<-c("x","y")
+
+# Either choose text or points
+#p<-p+geom_text(data=df_species,aes(x,y,label=rownames(df_species)))
+#p<-p+geom_point(data=df_species,aes(x,y,shape="Species"))+scale_shape_manual("",values=2)
+
+p<-p+theme_bw()
+pdf("CCA.pdf")
+print(p)
+dev.off()
+#########
+#
+##
+# ============================================================
+# Tutorial on fuzzy set ordination
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+# install.packages("fso")
+library(fso)
+library(ggplot2)
+library(vegan)
+
+#===dependencies===#
+
+#We need a Pvalue formatter
+formatPvalues <- function(pvalue) {
+  ra<-""
+  if(pvalue <= 0.1) ra<-"."
+  if(pvalue <= 0.05) ra<-"*"
+  if(pvalue <= 0.01) ra<-"**"
+  if(pvalue <= 0.001) ra<-"***"
+  return(ra)
+}
+
+#Reference: http://www.nku.edu/~boycer/fso/
+sim.binary <- function (df, method = NULL, diag=FALSE, upper=FALSE){
+  df <- as.matrix(df)
+  a <- df %*% t(df)
+  b <- df %*% (1 - t(df))
+  c <- (1 - df) %*% t(df)
+  d <- ncol(df) - a - b - c
+  #1=Jaccard, 2=Baroni-Urbani & Buser, 3=Kulczynski, 4=Ochiai, 5=Sorensen
+  if (method == 1) {
+    sim <- a/(a + b + c)
+  }
+  else if (method == 2) {
+    sim <- (a + sqrt(a*d))/(a + b + c + sqrt(a*d))
+  }
+  else if (method == 3) {
+    sim <- 0.5* (a/(a + b) + a/(a + c))
+  }
+  else if (method == 4) {
+    sim <- a/sqrt((a + b) * (a + c))
+  }
+  else if (method == 5) {
+    sim <- 2 * a/(2 * a + b + c)
+  }
+  sim2 <- sim[row(sim) > col(sim)]
+  class(sim2) <- "dist"
+  attr(sim2, "Labels") <- dimnames(df)[[1]]
+  attr(sim2, "Diag") <- diag
+  attr(sim2, "Upper") <- upper
+  attr(sim2, "Size") <- nrow(df)
+  attr(sim2, "call") <- match.call()
+  
+  return(sim2)
+}
+
+sim.abund <- function (df, method = NULL, diag = FALSE, upper = FALSE) 
+{
+  METHODS <- c("Baroni-Urbani & Buser", "Horn", "Yule (Modified)")
+  if (!inherits(df, "data.frame")) 
+    stop("df is not a data.frame")
+  if (any(df < 0)) 
+    stop("non negative value expected in df")
+  if (is.null(method)) {
+    cat("1 = Baroni-Urbani & Buser\n")
+    cat("2 = Horn\n")
+    cat("3 = Yule\n")
+    cat("Select an integer (1-3): ")
+    method <- as.integer(readLines(n = 1))
+  }
+  df <- as.matrix(df)
+  sites <- nrow(df)
+  species <- ncol(df)
+  sim <- array(0, c(as.integer(sites),as.integer(sites)))
+  spmax <- apply(df,2,max)
+  
+  if (method == 1) {
+    #compute similarities (Baroni-Urbani & Buser)
+    for (x in 1:sites) {
+      for (y in 1:sites) {
+        h1 <- 0
+        h2 <- 0
+        h3 <- 0
+        for (i in 1:species) {
+          h1 <- h1 + min(df[x,i],df[y,i])
+          h2 <- h2 + max(df[x,i],df[y,i])
+          h3 <- h3 + spmax[i] - max(df[x,i],df[y,i])
+        }
+        numer <- h1 + sqrt(h1*h3)
+        denom <- h2 + sqrt(h1*h3)
+        sim[x,y] <- ifelse(identical(denom,0), 0, numer/denom)
+      }
+    }
+  }
+  
+  else if (method == 2) {
+    #compute similarities (Horn)
+    for (x in 1:sites) {
+      for (y in 1:sites) {
+        h1 <- 0
+        h2 <- 0
+        h3 <- 0
+        for (i in 1:species) {
+          if((df[x,i] + df[y,i]) > 0) h1 <- h1 + (df[x,i] + df[y,i]) * log10(df[x,i] + df[y,i])
+          if(df[x,i] > 0) h2 <- h2 + df[x,i] * log10(df[x,i])
+          if(df[y,i] > 0) h3 <- h3 + df[y,i] * log10(df[y,i])
+        }
+        x.sum <- sum(df[x,])
+        y.sum <- sum(df[y,])
+        xy.sum <- x.sum + y.sum
+        if (identical(xy.sum, 0)) (sim[x,y] <- 0) else (sim[x,y] <- (h1 - h2 - h3)/(xy.sum * log10(xy.sum)-x.sum * log10(x.sum) - y.sum * log10(y.sum)))
+        if (sim[x,y] < 1.0e-10) sim[x,y] <- 0
+      }
+    }
+    
+  }
+  
+  else if (method == 3) {
+    #compute similarities (Yule)
+    for (x in 1:sites) {
+      for (y in 1:sites) {
+        h1 <- 0
+        h2 <- 0
+        h3 <- 0
+        h4 <- 0
+        for (i in 1:species) {
+          h1 <- h1 + min(df[x,i], df[y,i])
+          h2 <- h2 + max(df[x,i], df[y,i]) - df[y,i]
+          h3 <- h3 + max(df[x,i], df[y,i]) - df[x,i]
+          h4 <- h4 + spmax[i] - max(df[x,i], df[y,i])
+        }
+        numer <- sqrt(h1*h4)
+        denom <- sqrt(h1*h4) + sqrt(h2*h3)
+        sim[x,y] <- ifelse(identical(denom,0), 0, numer/denom)
+      }
+    }
+  }  
+  
+  else stop("Non convenient method")
+  sim >- t(sim)
+  sim2 <- sim[row(sim) > col(sim)]
+  attr(sim2, "Size") <- sites
+  attr(sim2, "Labels") <- dimnames(df)[[1]]
+  attr(sim2, "Diag") <- diag
+  attr(sim2, "Upper") <- upper
+  attr(sim2, "method") <- METHODS[method]
+  attr(sim2, "call") <- match.call()
+  class(sim2) <- "dist"
+  return(sim2)
+}
+
+st.acr <- function(sim, diag=FALSE, upper = FALSE)
+{
+  library(vegan)
+  dis <- 1 - sim
+  #use "shortest" or "extended"
+  edis <- as.matrix(stepacross(dis, path = "shortest", toolong = 1))
+  sim <- 1 - edis
+  amax <- max(sim)
+  amin <- min(sim)
+  sim <- (sim-amin)/(amax-amin)
+  sim2 <- sim[row(sim) > col(sim)]
+  attr(sim2, "Size") <- nrow(sim)
+  attr(sim2, "Labels") <- dimnames(sim)[[1]]
+  attr(sim2, "Diag") <- diag
+  attr(sim2, "Upper") <- upper
+  attr(sim2, "call") <- match.call()
+  class(sim2) <- "dist"
+  return(sim2)
+}
+#/===dependencies===#
+
+generateFSO<-function(data,Env,group,method,indices,filename){
+  
+  if(is.null(indices)){
+    indices<-seq(1:dim(Env)[2])
+  } 
+  
+  cat("Calculating dissimilarity matrix\n")
+  sim <- sim.abund(data,method=method)
+  dis.ho <- 1 - sim
+  df<-NULL
+  for(i in names(Env)[indices]){
+    cat(paste("Processing",i,"\n"))
+    param.fso<-fso(Env[,i],dis.ho,permute=1000)
+    tmp<-data.frame(mu=param.fso$mu,param=param.fso$data, group=as.factor(group),label=rep(paste(i,"(",round(param.fso$r,2)," ",formatPvalues(param.fso$p),")",sep=""),dim(data)[1]))
+    if(is.null(df)){df<-tmp} else {df<-rbind(df,tmp)}
+  }
+ # pdf(paste(filename,".pdf",sep=""),height=14,width=14)
+  p <- ggplot(df, aes(param, mu)) + 
+    geom_point(aes(colour = group)) +geom_smooth(,method="lm", size=1, se=T) +theme_bw()+
+    facet_wrap( ~ label , scales="free", ncol=3)
+  print(p)
+#  dev.off()
+  whole.fso<-fso(as.formula(paste("~",paste(lapply(indices,function(x) paste("Env[,",x,"]",sep="")),collapse="+"))),dis=dis.ho,data=Env,permute=1000)
+  whole.fso$var<-names(Env)[indices]
+  print(summary(whole.fso))
+}
+
+#===/generateFSO===#
+
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+
+meta_table<-read.csv("ENV_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Just a check to ensure that the samples in meta_table are in the same order as in abund_table
+meta_table<-meta_table[rownames(abund_table),]
+
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+ head(grouping_info)
+
+generateFSO(as.data.frame(abund_table),meta_table,grouping_info[,1],2,NULL,"FSO")
+
+######################
+###
+#
+# Tutorial on drawing a heatmap using ggplot2
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+# Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+# Convert to relative frequencies
+abund_table <- abund_table/rowSums(abund_table)
+library(reshape2)
+df<-melt(abund_table)
+colnames(df)<-c("Samples","Species","Value")
+library(plyr)
+library(scales)
+
+# We are going to apply transformation to our data to make it
+# easier on eyes 
+
+#df<-ddply(df,.(Samples),transform,rescale=scale(Value))
+df<-ddply(df,.(Samples),transform,rescale=sqrt(Value))
+
+# Plot heatmap
+p <- ggplot(df, aes(Species, Samples)) + 
+  geom_tile(aes(fill = rescale),colour = "white") + 
+  scale_fill_gradient(low = "white",high = "darkblue")+
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) + theme(legend.position = "none",axis.ticks = element_blank(),axis.text.x = element_text(angle = 90, hjust = 1,size=5),axis.text.y = element_text(size=5))
+
+pdf("Heatmap.pdf")
+print(p)
+dev.off()
+##############
+##
+#
+# ============================================================
+# Tutorial on drawing a taxa plot using ggplot2
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+meta_table<-read.csv("ENV_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Just a check to ensure that the samples in meta_table are in the same order as in abund_table
+meta_table<-meta_table[rownames(abund_table),]
+
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+
+head(grouping_info)
+
+#Apply proportion normalisation
+x<-abund_table/rowSums(abund_table)
+x<-x[,order(colSums(x),decreasing=TRUE)]
+
+#Extract list of top N Taxa
+N<-21
+taxa_list<-colnames(x)[1:N]
+#remove "__Unknown__" and add it to others
+taxa_list<-taxa_list[!grepl("Unknown",taxa_list)]
+N<-length(taxa_list)
+
+#Generate a new table with everything added to Others
+new_x<-data.frame(x[,colnames(x) %in% taxa_list],Others=rowSums(x[,!colnames(x) %in% taxa_list]))
+
+
+#You can change the Type=grouping_info[,1] should you desire any other grouping of panels
+df<-NULL
+for (i in 1:dim(new_x)[2]){
+  tmp<-data.frame(row.names=NULL,Sample=rownames(new_x),Taxa=rep(colnames(new_x)[i],dim(new_x)[1]),Value=new_x[,i],Type=grouping_info[,1])
+  if(i==1){df<-tmp} else {df<-rbind(df,tmp)}
+}
+colours <- c("#F0A3FF", "#0075DC", "#993F00","#4C005C","#2BCE48","#FFCC99","#808080","#94FFB5","#8F7C00","#9DCC00","#C20088","#003380","#FFA405","#FFA8BB","#426600","#FF0010","#5EF1F2","#00998F","#740AFF","#990000","#FFFF00");
+
+
+library(ggplot2)
+p<-ggplot(df,aes(Sample,Value,fill=Taxa))+geom_bar(stat="identity")+facet_grid(. ~ Type, drop=TRUE,scale="free",space="free_x")
+p<-p+scale_fill_manual(values=colours[1:(N+1)])
+p<-p+theme_bw()+ylab("Proportions")
+p<-p+ scale_y_continuous(expand = c(0,0))+theme(strip.background = element_rect(fill="gray85"))+theme(panel.margin = unit(0.3, "lines"))
+p<-p+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+pdf("TAXAplot.pdf",height=6,width=21)
+print(p)
+dev.off()
+############
+##
+#
+# ============================================================
+# Tutorial on drawing a correlation map using ggplot2
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+meta_table<-read.csv("ENV_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Filter out samples with fewer counts
+abund_table<-abund_table[rowSums(abund_table)>200,]
+
+#Extract the corresponding meta_table for the samples in abund_table
+meta_table<-meta_table[rownames(abund_table),]
+
+#You can use sel_env to specify the variables you want to use and sel_env_label to specify the labes for the pannel
+sel_env<-c("pH","Temp","TS","VS","VFA","CODt","CODs","perCODsbyt","NH4","Prot","Carbo")
+sel_env_label <- list(
+  'pH'="PH",
+  'Temp'="Temperature",
+  'TS'="TS",
+  'VS'="VS",
+  'VFA'="VFA",
+  'CODt'="CODt",
+  'CODs'="CODs",
+  'perCODsbyt'="%CODs/t",
+  'NH4'="NH4",
+  'Prot'="Protein",
+  'Carbo'="Carbon"
+)
+
+sel_env_label<-t(as.data.frame(sel_env_label))
+sel_env_label<-as.data.frame(sel_env_label)
+colnames(sel_env_label)<-c("Trans")
+sel_env_label$Trans<-as.character(sel_env_label$Trans)
+
+#Now get a filtered table based on sel_env
+meta_table_filtered<-meta_table[,sel_env]
+abund_table_filtered<-abund_table[rownames(meta_table_filtered),]
+
+#Apply normalisation (either use relative or log-relative transformation)
+#x<-abund_table_filtered/rowSums(abund_table_filtered)
+x<-log((abund_table_filtered+1)/(rowSums(abund_table_filtered)+dim(abund_table_filtered)[2]))
+
+x<-x[,order(colSums(x),decreasing=TRUE)]
+#Extract list of top N Taxa
+N<-51
+taxa_list<-colnames(x)[1:N]
+#remove "__Unknown__" and add it to others
+taxa_list<-taxa_list[!grepl("Unknown",taxa_list)]
+N<-length(taxa_list)
+x<-data.frame(x[,colnames(x) %in% taxa_list])
+y<-meta_table_filtered
+
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+
+head(grouping_info)
+
+
+#Let us group on countries
+groups<-grouping_info[,1]
+
+#You can use kendall, spearman, or pearson below:
+method<-"kendall"
+
+
+#Now calculate the correlation between individual Taxa and the environmental data
+df<-NULL
+for(i in colnames(x)){
+  for(j in colnames(y)){
+    for(k in unique(groups)){
+      a<-x[groups==k,i,drop=F]
+      b<-y[groups==k,j,drop=F]
+      tmp<-c(i,j,cor(a[complete.cases(b),],b[complete.cases(b),],use="everything",method=method),cor.test(a[complete.cases(b),],b[complete.cases(b),],method=method)$p.value,k)
+      if(is.null(df)){
+        df<-tmp  
+      }
+      else{
+        df<-rbind(df,tmp)
+      }    
+    }
+  }
+}
+
+df<-data.frame(row.names=NULL,df)
+colnames(df)<-c("Taxa","Env","Correlation","Pvalue","Type")
+df$Pvalue<-as.numeric(as.character(df$Pvalue))
+df$AdjPvalue<-rep(0,dim(df)[1])
+df$Correlation<-as.numeric(as.character(df$Correlation))
+
+#You can adjust the p-values for multiple comparison using Benjamini & Hochberg (1995):
+# 1 -> donot adjust
+# 2 -> adjust Env + Type (column on the correlation plot)
+# 3 -> adjust Taxa + Type (row on the correlation plot for each type)
+# 4 -> adjust Taxa (row on the correlation plot)
+# 5 -> adjust Env (panel on the correlation plot)
+adjustment_label<-c("NoAdj","AdjEnvAndType","AdjTaxaAndType","AdjTaxa","AdjEnv")
+adjustment<-5
+
+if(adjustment==1){
+  df$AdjPvalue<-df$Pvalue
+} else if (adjustment==2){
+  for(i in unique(df$Env)){
+    for(j in unique(df$Type)){
+      sel<-df$Env==i & df$Type==j
+      df$AdjPvalue[sel]<-p.adjust(df$Pvalue[sel],method="BH")
+    }
+  }
+} else if (adjustment==3){
+  for(i in unique(df$Taxa)){
+    for(j in unique(df$Type)){
+      sel<-df$Taxa==i & df$Type==j
+      df$AdjPvalue[sel]<-p.adjust(df$Pvalue[sel],method="BH")
+    }
+  }
+} else if (adjustment==4){
+  for(i in unique(df$Taxa)){
+    sel<-df$Taxa==i
+    df$AdjPvalue[sel]<-p.adjust(df$Pvalue[sel],method="BH")
+  }
+} else if (adjustment==5){
+  for(i in unique(df$Env)){
+    sel<-df$Env==i
+    df$AdjPvalue[sel]<-p.adjust(df$Pvalue[sel],method="BH")
+  }
+}
+
+#Now we generate the labels for signifant values
+df$Significance<-cut(df$AdjPvalue, breaks=c(-Inf, 0.001, 0.01, 0.05, Inf), label=c("***", "**", "*", ""))
+
+#We ignore NAs
+df<-df[complete.cases(df),]
+
+#We want to reorganize the Env data based on they appear
+df$Env<-factor(df$Env,as.character(df$Env))
+
+#We use the function to change the labels for facet_grid in ggplot2
+Env_labeller <- function(variable,value){
+  return(sel_env_label[as.character(value),"Trans"])
+}
+
+p <- ggplot(aes(x=Type, y=Taxa, fill=Correlation), data=df)
+p <- p + geom_tile() + scale_fill_gradient2(low="#2C7BB6", mid="white", high="#D7191C") 
+p<-p+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust=0.5))
+p<-p+geom_text(aes(label=Significance), color="black", size=3)+labs(y=NULL, x=NULL, fill=method)
+p<-p+facet_grid(. ~ Env, drop=TRUE,scale="free",space="free_x",labeller=Env_labeller)
+pdf(paste("Correlation_",adjustment_label[adjustment],".pdf",sep=""),height=8,width=22)
+print(p)
+dev.off()
+#############
+##
+#
+# ============================================================
+# Tutorial on finding significant taxa and then plotting them using ggplot2
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+# install.packages("reshape")
+library(reshape)
+library(ggplot2)
+
+#Load the abundance table 
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+head(grouping_info)
+
+#Use countries as grouping information
+groups<-as.factor(grouping_info[,1])
+
+#Apply normalisation (either use relative or log-relative transformation)
+#data<-abund_table/rowSums(abund_table)
+data<-log((abund_table+1)/(rowSums(abund_table)+dim(abund_table)[2]))
+data<-as.data.frame(data)
+
+#Reference: http://www.bigre.ulb.ac.be/courses/statistics_bioinformatics/practicals/microarrays_berry_2010/berry_feature_selection.html
+kruskal.wallis.alpha=0.01
+kruskal.wallis.table <- data.frame()
+for (i in 1:dim(data)[2]) {
+  ks.test <- kruskal.test(data[,i], g=groups)
+  # Store the result in the data frame
+  kruskal.wallis.table <- rbind(kruskal.wallis.table,
+                                data.frame(id=names(data)[i],
+                                           p.value=ks.test$p.value
+                                ))
+  # Report number of values tested
+  cat(paste("Kruskal-Wallis test for ",names(data)[i]," ", i, "/", 
+            dim(data)[2], "; p-value=", ks.test$p.value,"\n", sep=""))
+}
+
+
+kruskal.wallis.table$E.value <- kruskal.wallis.table$p.value * dim(kruskal.wallis.table)[1]
+
+kruskal.wallis.table$FWER <- pbinom(q=0, p=kruskal.wallis.table$p.value, 
+                                    size=dim(kruskal.wallis.table)[1], lower.tail=FALSE)
+
+kruskal.wallis.table <- kruskal.wallis.table[order(kruskal.wallis.table$p.value,
+                                                   decreasing=FALSE), ]
+kruskal.wallis.table$q.value.factor <- dim(kruskal.wallis.table)[1] / 1:dim(kruskal.wallis.table)[1]
+kruskal.wallis.table$q.value <- kruskal.wallis.table$p.value * kruskal.wallis.table$q.value.factor
+pdf("KW_correction.pdf")
+plot(kruskal.wallis.table$p.value,
+     kruskal.wallis.table$E.value,
+     main='Multitesting corrections',
+     xlab='Nominal p-value',
+     ylab='Multitesting-corrected statistics',
+     log='xy',
+     col='blue',
+     panel.first=grid(col='#BBBBBB',lty='solid'))
+lines(kruskal.wallis.table$p.value,
+      kruskal.wallis.table$FWER,
+      pch=20,col='darkgreen', type='p'
+)
+lines(kruskal.wallis.table$p.value,
+      kruskal.wallis.table$q.value,
+      pch='+',col='darkred', type='p'
+)
+abline(h=kruskal.wallis.alpha, col='red', lwd=2)
+legend('topleft', legend=c('E-value', 'p-value', 'q-value'), col=c('blue', 'darkgreen','darkred'), lwd=2,bg='white',bty='o')
+dev.off()
+
+last.significant.element <- max(which(kruskal.wallis.table$q.value <= kruskal.wallis.alpha))
+selected <- 1:last.significant.element
+diff.cat.factor <- kruskal.wallis.table$id[selected]
+diff.cat <- as.vector(diff.cat.factor)
+
+print(kruskal.wallis.table[selected,])
+
+#Now we plot taxa significantly different between the categories
+df<-NULL
+for(i in diff.cat){
+  tmp<-data.frame(data[,i],groups,rep(paste(i," q = ",round(kruskal.wallis.table[kruskal.wallis.table$id==i,"q.value"],5),sep=""),dim(data)[1]))
+  if(is.null(df)){df<-tmp} else { df<-rbind(df,tmp)} 
+}
+colnames(df)<-c("Value","Type","Taxa")
+
+p<-ggplot(df,aes(Type,Value,colour=Type))+ylab("Log-relative normalised")
+p<-p+geom_boxplot()+geom_jitter()+theme_bw()+
+  facet_wrap( ~ Taxa , scales="free", ncol=3)
+p<-p+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+pdf("KW_significant.pdf",width=10,height=14)
+print(p)
+dev.off()
+#######
+####
+#
+# ============================================================
+# Tutorial on hierarchical clustering and plotting samples using ggplot2
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+# install.packages("ggdendro")
+library(ggplot2)
+library(ggdendro)
+
+#Load the abundance table 
+abund_table<-read.csv("SPE_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(abund_table),t(as.data.frame(strsplit(rownames(abund_table),"_"))))
+head(grouping_info)
+
+betad<-vegdist(abund_table,method="bray")
+
+# Use Adonis to test for overall differences
+res_adonis <- adonis(betad ~ X1, grouping_info) 
+
+#Cluster the samples
+hc <- hclust(betad)
+
+#We will color the labels according to countries(group_info[,1])
+hc_d <- dendro_data(as.dendrogram(hc))
+hc_d$labels$Type<-grouping_info[as.character(hc_d$labels$label),1]
+
+#Coloring function
+gg_color_hue<-function(n){
+  hues=seq(15,375,length=n+1)
+  hcl(h=hues,l=65,c=100)[1:n]
+}
+
+cols=gg_color_hue(length(unique(hc_d$labels$Type)))
+hc_d$labels$color=cols[hc_d$labels$Type]
+
+## Plot clusters
+p1 <- ggplot(data = segment(hc_d)) +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend)) +
+  coord_flip() +
+  scale_x_discrete(labels=label(hc_d)$label) +
+  ylab("Distance (beta diversity = bray)") + theme_bw()+
+  theme(axis.text.y = element_text(color = hc_d$labels$color),
+        axis.title.y = element_blank())
+p1 <- p1 + geom_point(data=hc_d$label, aes(x = x, y = y, color = Type), inherit.aes =F, alpha = 0)
+p1 <- p1 + guides(colour = guide_legend(override.aes = list(size=3, alpha = 1)))+
+  scale_color_manual(values = cols)
+pdf("Cluster.pdf",height=10)
+print(p1)
+dev.off()
+######
+##
+#
+# ============================================================
+# Tutorial on Unifrac distances for OTU tables using phyloseq
+# by Umer Zeeshan Ijaz (http://userweb.eng.gla.ac.uk/umer.ijaz)
+# =============================================================
+
+library(ggplot2)
+
+#Reference: http://joey711.github.io/phyloseq-demo/phyloseq-demo.html
+#Reference: https://rdp.cme.msu.edu/tutorials/stats/using_rdp_output_with_phyloseq.html
+#Reference: http://www.daijiang.name/en/2014/05/17/phylogenetic-functional-beta-diversity/
+#Reference: http://www.wernerlab.org/teaching/qiime/overview/d
+#Reference: http://joey711.github.io/waste-not-supplemental/
+
+# Question:
+# Given an OTU table (All_Good_P2_C03.csv) and corresponding OTU sequences (All_Good_P2_C03.fa), how do you generate phylogenetic tree?
+# 
+# Solution:
+#   
+# STEP 1: Aligning sequences
+# We'll be using a reference alignment to align our sequences.  In QIIME, this reference alignment is core_set_aligned.fasta.imputed 
+# and QIIME already knows where it is. The following is done using PyNAST, though alignment can also be done with MUSCLE and Infernal (http://qiime.org/scripts/align_seqs.html). 
+# 
+# $ align_seqs.py -i All_Good_P2_C03.fa -o alignment/
+# 
+# STEP 2: Filtering alignment
+# This alignment contains lots of gaps, and it includes hypervariable regions that make it difficult to build an accurate tree. So, we'll 
+# filter it.  Filtering an alignment of 16S rRNA gene sequences can involve a Lane mask. In QIIME, this Lane mask for the GG core is lanemask_in_1s_and_0s
+# 
+# $ filter_alignment.py -i alignment/All_Good_P2_C03_aligned.fasta -o alignment
+# 
+# STEP 3: Make tree
+# make_phylogeny.py script uses the FastTree approximately maximum likelihood program, a good model of evolution for 16S rRNA gene sequences
+# 
+# $ make_phylogeny.py -i alignment/All_Good_P2_C03_aligned_pfiltered.fasta -o All_Good_P2_C03.tre
+# 
+# STEP 4: Generate taxonomy using RDP Classifier
+# 
+# $ java -Xmx1g -jar $RDP_PATH/classifier.jar classify -f filterbyconf -o All_Good_P2_C03_Assignments.txt All_Good_P2_C03.fa
+# 
+# STEP 5: Finally generate a csv file that can be imported in R
+# 
+# $ <All_Good_P2_C03_Assignments.txt awk -F"\t" 'BEGIN{print "OTUs,Domain,Phylum,Class,Order,Family,Genus"}{gsub(" ","_",$0);gsub("\"","",$0);print $1","$3","$6","$9","$12","$15","$18}' > All_Good_P2_C03_Taxonomy.csv
+# 
+
+abund_table<-read.csv("All_Good_P2_C03.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+abund_table<-t(abund_table)
+
+meta_table<-read.csv("ENV_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+#Get grouping information
+grouping_info<-data.frame(row.names=rownames(meta_table),t(as.data.frame(strsplit(rownames(meta_table),"_"))))
+colnames(grouping_info)<-c("Country","Latrine","Depth")
+meta_table<-data.frame(meta_table,grouping_info)
+
+#Filter out samples not present in meta_table
+abund_table<-abund_table[rownames(abund_table) %in% rownames(meta_table),]
+
+#Load the tree using ape package
+library(ape)
+OTU_tree <- read.tree("All_Good_P2_C03.tre")
+
+#Now load the taxonomy
+OTU_taxonomy<-read.csv("All_Good_P2_C03_Taxonomy.csv",row.names=1,check.names=FALSE)
+# source('http://bioconductor.org/biocLite.R')
+# biocLite('phyloseq')
+
+library(phyloseq)
+#Convert the data to phyloseq format
+OTU = otu_table(as.matrix(abund_table), taxa_are_rows = FALSE)
+TAX = tax_table(as.matrix(OTU_taxonomy))
+SAM = sample_data(meta_table)
+physeq<-merge_phyloseq(phyloseq(OTU, TAX),SAM,OTU_tree)
+
+#Plot richness
+p<-plot_richness(physeq, x = "Country", color = "Depth")
+p<-p+theme_bw()
+pdf("phyloseq_richness.pdf",width=14)
+print(p)
+dev.off()
+
+#Now take the subset of the data for latrines at depth 1 and for Prevotellaceae
+physeq_subset<-subset_taxa(subset_samples(physeq,Depth=="1"),Family=="Prevotellaceae")
+p <- plot_tree(physeq_subset, color = "Country", label.tips = "Genus", size = "abundance",text.size=2)
+pdf("phyloseq_tree.pdf",width=8)
+print(p)
+dev.off()
+
+#We now take the 500 most abundant Taxa
+physeq_subset<-prune_taxa(names(sort(taxa_sums(physeq), TRUE)[1:500]), physeq)
+
+#Make an PCoA ordination plot based on abundance based unifrac distances with the following commands
+ord <- ordinate(physeq_subset, method="PCoA", distance="unifrac", weighted=TRUE)
+p <- plot_ordination(physeq_subset, ord, color="Country",title="Phyloseq's Weighted Unifrac")
+p <- p + geom_point(size=5) + theme_bw()
+pdf("phyloseq_unifrac.pdf",width=8)
+print(p)
+dev.off()
+
+
+#The GUniFrac package can also be used to calculate unifrac distances and has additional features. 
+#Unifrac distances are traditionally calculated on either presence/absence data, or abundance data. 
+#The former can be affected by PCR and sequencing errors leading to a high number of spurious and 
+#usually rare OTUs, and the latter can give undue weight to the more abundant OTUs. 
+#GUniFrac's methods include use of a parameter alpha that controls the weight given to abundant OTUs 
+#and also a means of adjusting variances.
+# install.packages(c("GUniFrac","phangorn"))
+library(GUniFrac)
+library(phangorn)
+
+#The function GUniFrac requires a rooted tree, but unlike phyloseq's ordination function 
+#will not try to root an unrooted one. We will apply mid-point rooting with the midpoint function 
+#from the phangorn package
+
+unifracs <- GUniFrac(as.matrix(otu_table(physeq_subset)), midpoint(phy_tree(physeq_subset)), alpha = c(0, 0.5, 1))$unifracs
+
+# We can extract a variety of distance matrices with different weightings.
+dw <- unifracs[, , "d_1"]  # Weighted UniFrac
+du <- unifracs[, , "d_UW"]  # Unweighted UniFrac
+dv <- unifracs[, , "d_VAW"]  # Variance adjusted weighted UniFrac
+d0 <- unifracs[, , "d_0"]  # GUniFrac with alpha 0
+d5 <- unifracs[, , "d_0.5"]  # GUniFrac with alpha 0.5
+
+# use vegan's cmdscale function to make a PCoA ordination from a distance matrix.
+pcoa <- cmdscale(dw, k = nrow(as.matrix(otu_table(physeq_subset))) - 1, eig = TRUE, add = TRUE)
+p<-plot_ordination(physeq_subset, pcoa, color="Country", 
+                   title="GUniFrac Weighted Unifrac") + geom_point(size=5)+ theme_bw()
+pdf("GUniFrac_weighted.pdf",width=8)
+print(p)
+dev.off()
+
+pcoa <- cmdscale(du, k = nrow(as.matrix(otu_table(physeq_subset))) - 1, eig = TRUE, add = TRUE)
+p<-plot_ordination(physeq_subset, pcoa, color="Country", 
+                   title="GUniFrac Unweighted UniFrac") + geom_point(size=5)+ theme_bw()
+pdf("GUniFrac_unweighted.pdf",width=8)
+print(p)
+dev.off()
+
+pcoa <- cmdscale(dv, k = nrow(as.matrix(otu_table(physeq_subset))) - 1, eig = TRUE, add = TRUE)
+p<-plot_ordination(physeq_subset, pcoa, color="Country", 
+                   title="GUniFrac Variance adjusted weighted UniFrac") + geom_point(size=5)+ theme_bw()
+pdf("GUniFrac_variance.pdf",width=8)
+print(p)
+dev.off()
+
+pcoa <- cmdscale(d0, k = nrow(as.matrix(otu_table(physeq_subset))) - 1, eig = TRUE, add = TRUE)
+p<-plot_ordination(physeq_subset, pcoa, color="Country", 
+                   title="GUniFrac with alpha 0") + geom_point(size=5)+ theme_bw()
+pdf("GUniFrac_alpha0.pdf",width=8)
+print(p)
+dev.off()
+
+pcoa <- cmdscale(d5, k = nrow(as.matrix(otu_table(physeq_subset))) - 1, eig = TRUE, add = TRUE)
+p<-plot_ordination(physeq_subset, pcoa, color="Country", 
+                   title="GUniFrac with alpha 0.5") + geom_point(size=5)+ theme_bw()
+pdf("GUniFrac_alpha0.5.pdf",width=8)
+print(p)
+dev.off()
+#######
+##
+#
+library(ggplot2)
+library(phyloseq)
+library("magrittr")
+
+abund_table<-read.csv("All_Good_P2_C03.csv",row.names=1,check.names=FALSE)
+#Transpose the data to have sample names on rows
+taxo_table <- read.csv("All_Good_P2_C03_Taxonomy.csv",row.names=1,check.names=FALSE)
+# Remove OTUs not 3 greater than 3
+keepTaxa = apply(X = abund_table > 1L,
+                 MARGIN = 1, FUN = sum) >= 1L
+taxo_table <- as.data.frame(t(as.matrix(taxo_table)))
+taxo_table$id <- rownames(taxo_table)
+phy = taxo_table %>% filter(keepTaxa)
+rownames(phy) <- phy$id
+# get abundance in %
+phy <- transform_sample_counts(phy, function(x) x/sum(x))
+# convert Phylum to a character vector from a factor because R
+names(phy) <- c("Domain","Phylum","Class","Order","Family","Genus","OTU")
+dat$Phylum <- as.character(dat$Phylum)
+# group dataframe by Phylum, calculate median rel. abundance
+dat[, median := median(Abundance, na.rm = TRUE),
+    by = "Phylum"]
+# Change name to remainder of Phylum less than 1%
+dat[(median <= 0.01), Phylum := "Remainder"]
+# boxplot
+ggplot(dat[Abundance > 0],
+       aes(x=Phylum,
+           y=Abundance)) +
+  geom_boxplot() +
+  coord_flip() +
+  scale_y_log10()
+########################
+###
+# Venn diagram code
+#
+#install.packages("VennDiagram") # support for upto 5 graphs
+#install.packages("venn")  # supports upto 7 graphs
+library(venn)
+# Make data
+oneName <- function() paste(sample(LETTERS,5,replace=TRUE),collapse="")
+geneNames <- replicate(1000, oneName())
+GroupA <- sample(geneNames, 400, replace=FALSE)
+GroupB <- sample(geneNames, 750, replace=FALSE)
+GroupC <- sample(geneNames, 250, replace=FALSE)
+GroupD <- sample(geneNames, 300, replace=FALSE)
+GroupE <- sample(geneNames, 500, replace=FALSE)
+GroupF <- sample(geneNames, 350, replace=FALSE)
+input  <-list(A=GroupA,B=GroupB,C=GroupC,D=GroupD,E=GroupE,G=GroupF)
+
+venn(input, zcolor = rainbow(7), lty=0.1, borders = TRUE) 
+
+abund_table<-read.csv("./Data/All_Good_P2_C03.csv",row.names=1,check.names=FALSE)
+
+meta_table <- read.csv("./Data/ENV_pitlatrine.csv",row.names=1,check.names=FALSE)
+
+# creating a df with samples available in both df
+new_abund <- subset(t(abund_table),rownames(t(abund_table)) %in% rownames(meta_table))
+# transpose the abund as a df
+new_abund <- as.data.frame(t(new_abund))
+# subset the d.f with 
+
+new_abund %>% select(seq(from=1,to=80, by= (81-1)/5), 81) -> red_abund
+
+# add a column of id from rownames
+red_abund$id <- rownames(red_abund)
+# remove all rows that sum up to zero
+red_abund %>% filter((T_2_1 + T_5_2 + V_2_3 + V_9_3 +V_16_1 +V_22_4)> 0)->true_red
+rownames(true_red) <- true_red$id # rename the rownames
+true_red[1:10,1:7] # check the df
+true_red <- true_red[1:6]  #drop the id column
+t_2_1 <- true_red[1]
+
+library(venn); library(tidyverse); library(stringr); 
+
+venn(list=list(t_2_1,t_2_2), ilabels = TRUE,  zcolor = "style", size = 25, cexil = 1.2, cexsn = 1.5)
