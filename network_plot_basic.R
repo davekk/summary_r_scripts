@@ -1,5 +1,5 @@
 getwd()
-setwd("~/Documents/Davies_2018/limidb_project/")
+setwd("~/limidb_data/")
 # read the microbiome data 
 otu_dense <- read.table("./chick_micr_feature-table.tsv", 
                         sep="\t", numerals = "no.loss", header=TRUE)
@@ -9,15 +9,16 @@ taxonomy <- read.table("chick_micr_taxonomy.tsv", sep="\t",
                        numerals = "no.loss", header=TRUE)
 metadata <- read.table("chick_micr_metadata.tsv", sep="\t", 
                        numerals = "no.loss", header=TRUE)
-library(GGally)
-library(tidyverse)
-library('ggparallel')
+#install and load needed 
+install.packages('GGally')
+install.packages('ggparallel')
+require(GGally); require(tidyverse);require('ggparallel')
 
 paste0("otu",c(1:nrow(otu_dense))) ->otu_dense$sid # give a shorter otu id
-otu_dense%>% select(OTU.ID,sid) -> temp_names
-names(taxonomy) <- c("OTU.ID","Taxon","Confidence")
-full_join(taxonomy,temp_names, by="OTU.ID") ->new_tax
-full_join(otu_sparse,temp_names, by="OTU.ID") ->new_otu_sp
+otu_dense%>% select(OTU.ID,sid) -> temp_names # get the id and temp id
+names(taxonomy) <- c("OTU.ID","Taxon","Confidence") # rename the colunms
+full_join(taxonomy,temp_names, by="OTU.ID") ->new_tax # assign new names to tax tibble
+full_join(otu_sparse,temp_names, by="OTU.ID") ->new_otu_sp # assign new names to otu tibble
 
 # drop the looong otu id
 dplyr::select(new_otu_sp, -'OTU.ID') ->final_otu_sp
@@ -40,12 +41,15 @@ final_otu_d[1:nrow(final_otu_d),c(1,2,5,6)] -> small_df
 ## from https://www.r-bloggers.com/parallel-coordinate-plots-for-discrete-and-categorical-data-in-r-a-comparison/
 # modified as needed
 small_df %>% mutate(count=chicken_gut_meta_1+chicken_gut_meta_12+
-                      chicken_gut_meta_13) -> small_df 
-small_df %>%arrange(desc(count)) ->small_df
- small_df[1:20,] ->df1
+                  chicken_gut_meta_13) -> small_df # count the otu per row in new df
+small_df %>%arrange(desc(count)) ->small_df # rearrange the df by the count column i descending order
+ small_df[1:20,] ->df1 # subset a small df of 20 rows
+log(df1[,2:ncol(df1)])->df1[,2:ncol(df1)] # natural log transform the df
 small_df[181:200,] ->df2
+log(df2[,2:ncol(df2)])->df2[,2:ncol(df2)]
 
-ggparcoord(df2, columns = 2:4,groupColumn = 'OTU.ID', scale = 'globalminmax')
+#plot the 2 dfs separately
+ggparcoord(df1, columns = 2:4,groupColumn = 'OTU.ID', scale = 'globalminmax')
 
 ggparallel(list("chicken_gut_meta_1","chicken_gut_meta_12","chicken_gut_meta_13"),
            df2, order=0)
@@ -53,14 +57,14 @@ new_df2<- as.data.frame(df2)
 ggparallel(list("chicken_gut_meta_1","chicken_gut_meta_12","chicken_gut_meta_13"),
            new_df2, order=0, weight = 'count')
 #######
-ggparcoord(small_df, columns = 2:4,groupColumn = 'OTU.ID', scale = 'globalminmax')
+# scale it for the bigger dataset
+log(small_df[,2:ncol(small_df)])->small_df[,2:ncol(small_df)]
+ggparcoord(small_df, columns = 2:4,groupColumn = 'OTU.ID', scale = 'globalminmax')+
+  theme(legend.position="none") # drop the key as it is taking up the too much space
 
 ggparallel(list("chicken_gut_meta_1","chicken_gut_meta_12","chicken_gut_meta_13"),
-           small_df, order=0, weight = 'count')
-###
-library(MASS)
-mycols<- colours()[as.numeric(as.factor(new_df2$OTU.ID))]
-parcoord(new_df2[,c(2:4)], col = mycols)
+           small_df, order=0, weight = 'count')+theme(legend.position="none")
+
 ##
 # tests done with reduced dataset
 # onto the entire dataset
@@ -76,20 +80,19 @@ final_otu_d %>% mutate(count=chicken_gut_meta_1+chicken_gut_meta_10+chicken_gut_
                        chicken_gut_meta_8+chicken_gut_meta_9) -> large_df 
 
 large_df %>%arrange(desc(count)) ->large_df
-subset(large_df,count<1000, select = 1:ncol(large_df)) ->df_reduced
-subset(df_reduced,count>10, select = 1:ncol(df_reduced)) ->df_reduced2
-df_reduced2[1:20,] ->df3
-df_reduced2[181:200,] ->df4
-df_reduced2[850:872,]-> df5
-ggparcoord(df3, columns = 2:38,groupColumn = 'OTU.ID', scale = 'globalminmax')+
-           theme(axis.text.x = element_text(angle = 90, hjust = 0.5))
+
+large_df[1:20,] ->df3 
+log(df3[,2:37])->df3[,2:37]
+
+ggparcoord(df3, columns = 2:37,groupColumn = 'OTU.ID', scale = 'globalminmax')+
+           theme(axis.text.x = element_text(angle = 90, hjust = 0.5))+
+  theme(legend.position="none")
 
 ggsave("network_plot.pdf")
-#ggparallel(list("chicken_gut_meta_1","chicken_gut_meta_12","chicken_gut_meta_13"),
-        #   df2, order=0)
 
-#new_df2<- as.data.frame(df2)
-#ggparallel(list("chicken_gut_meta_1","chicken_gut_meta_12","chicken_gut_meta_13"),
-           new_df2, order=0, weight = 'count')
-#ggparallel(list(names(df3)[2:37]),
-           df3, order=0, weight = 'count')
+log(large_df[,2:ncol(large_df)])->large_df[,2:ncol(large_df)]
+ggparcoord(large_df, columns = 2:37,groupColumn = 'OTU.ID',scale = 'globalminmax')+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5))+
+  theme(legend.position="none")+ labs(x='Sample',y='Log transformed OTU counts')
+ggsave("~/module2_R_biostats-master/network_plot_full.pdf")
+ggsave("~/module2_R_biostats-master/network_plot_full.png")
