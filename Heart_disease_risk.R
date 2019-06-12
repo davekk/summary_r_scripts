@@ -8,10 +8,6 @@ sum(is.na(disease)) # check if there is any NA value in dataset
 summary(disease) # get a basic summary of the data
 set.seed(20190801) # to make sure the data is reproducable because initial cluster assignments are random.
 
-
-
-
-
 #q2
 kmeans_disease <- kmeans(disease, centers = 4, nstart=50) # generate 4 clusters of the whole dataset and try 50 different random starting assignments and then select the one with the lowest within cluster variation
 
